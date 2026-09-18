@@ -26,6 +26,20 @@ def discover(root: Path) -> list[Path]:
     for name in _SKILL_FILENAMES:
         found.extend(root.rglob(name))
 
+    # `rglob` does not descend into symlinked directories, and the usual
+    # installer (`npx skills add`) puts every skill in a shared store and
+    # symlinks it into the agent's skills folder. Without this pass, pointing
+    # skillprobe at a real skills directory reports one skill instead of
+    # twenty-one and calls it clean — which is the exact silent failure this
+    # tool exists to catch.
+    for child in root.iterdir():
+        if not child.is_dir():  # follows the symlink, unlike rglob
+            continue
+        for name in _SKILL_FILENAMES:
+            candidate = child / name
+            if candidate.is_file():
+                found.append(candidate)
+
     # Loose top-level markdown, excluding anything already found and the
     # README that almost every skills folder has.
     claimed = {p.parent for p in found}
@@ -33,7 +47,21 @@ def discover(root: Path) -> list[Path]:
         if path.parent not in claimed and path.name.lower() != "readme.md":
             found.append(path)
 
-    return sorted(set(found))
+    # Dedupe by what each path actually points at, so a symlink and its target
+    # are not both reported when the scan covers the store and the link farm.
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in sorted(set(found)):
+        try:
+            key = path.resolve()
+        except OSError:  # broken symlink, dangling mount
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+
+    return unique
 
 
 def split_frontmatter(text: str) -> tuple[str | None, str]:

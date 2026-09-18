@@ -75,3 +75,40 @@ def test_discover_is_sorted_for_stable_output(make_skill, root):
     make_skill("alpha")
     found = discover(root)
     assert found == sorted(found)
+
+
+def _write_skill(directory: Path, name: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: use when testing discovery\n---\nbody",
+        encoding="utf-8",
+    )
+
+
+def test_discover_follows_symlinked_skills(make_skill, root, tmp_path_factory):
+    """`npx skills add` keeps skills in a shared store and symlinks them in.
+
+    Path.rglob does not descend into symlinked directories, so this layout
+    reported one skill and called it clean. Found by running skillprobe on a
+    real 21-skill directory and being told it held 1.
+
+    The store must live OUTSIDE root: the `root` fixture is `tmp_path` itself,
+    so a store under `tmp_path` is inside the scan and rglob finds it directly,
+    which is how the first version of this test passed without the fix.
+    """
+    store = tmp_path_factory.mktemp("store")
+    _write_skill(store / "linked", "linked")
+
+    make_skill("direct")
+    (root / "linked").symlink_to(store / "linked", target_is_directory=True)
+
+    names = {p.parent.name for p in discover(root)}
+    assert names == {"direct", "linked"}
+
+
+def test_discover_reports_a_symlink_and_its_target_once(root: Path):
+    """A scan covering both the store and the link to it counts one skill."""
+    _write_skill(root / "store" / "shared", "shared")
+    (root / "shared-link").symlink_to(root / "store" / "shared", target_is_directory=True)
+
+    assert len(discover(root)) == 1
